@@ -1,10 +1,16 @@
 -- CreateTable
 CREATE TABLE "User" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     "email" TEXT NOT NULL,
     "username" TEXT NOT NULL,
     "password" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    "profileImg" TEXT,
+    "interests" TEXT,
+    "bio" TEXT,
+    "links" TEXT,
+    "status" TEXT
 );
 
 -- CreateIndex

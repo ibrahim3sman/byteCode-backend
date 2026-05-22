@@ -1,61 +1,78 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RegisterDto } from './dto/register.dto';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jwt: JwtService
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async register(dto: RegisterDto) {
-    const exists = await this.prisma.user.findFirst({
-      where: {
-        OR: [{ email: dto.email }, { username: dto.username }],
-      },
+  async findOrCreateUser(supabasePayload: {
+    supabaseId: string;
+    email: string;
+    user_metadata?: Record<string, any>;
+  }) {
+    const { supabaseId, email, user_metadata } = supabasePayload;
+
+    let user = await this.prisma.user.findUnique({
+      where: { supabaseId },
     });
-    if (exists) {
-      throw new ConflictException('Email or username already exists');
+
+    if (user) {
+      return this.cleanUserData(user);
     }
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
-    const user = await this.prisma.user.create({
+
+    user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (user) {
+      // linking existing user to their supabase account
+      user = await this.prisma.user.update({
+        where: { email },
+        data: { supabaseId },
+      });
+      return this.cleanUserData(user);
+    }
+
+    // creating a new user from Supabase data
+    const username = this.generateUsername(email, user_metadata);
+    const profileImg =
+      user_metadata?.avatar_url || user_metadata?.picture || null;
+
+    user = await this.prisma.user.create({
       data: {
-        email: dto.email,
-        username: dto.username,
-        password: hashedPassword,
+        supabaseId,
+        email,
+        username,
+        profileImg,
       },
     });
-    return this.signToken(user.id, user.email);
 
+    return this.cleanUserData(user);
   }
-  async login(dto: LoginDto) {
+
+  async getProfile(supabaseId: string) {
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    })
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    const valid = await bcrypt.compare(dto.password, user.password);
-    if (!valid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-    return {
-      access_token: this.signToken(user.id, user.email),
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        profileImg: user.profileImg,
-      },
-    };
+      where: { supabaseId },
+    });
+
+    if (!user) return null;
+    return this.cleanUserData(user);
   }
 
-  private signToken(userId: string, email: string) {
-    const payload = { sub: userId, email };
-    return this.jwt.sign(payload);
+  private generateUsername(
+    email: string,
+    metadata?: Record<string, any>,
+  ): string {
+    if (metadata?.user_name) return metadata.user_name;
+    if (metadata?.preferred_username) return metadata.preferred_username;
+    if (metadata?.full_name)
+      return metadata.full_name.replace(/\s+/g, '_').toLowerCase();
+
+    return email.split('@')[0];
+  }
+
+  private cleanUserData(user: any) {
+    const { password, ...cleanUser } = user;
+    return cleanUser;
   }
 }

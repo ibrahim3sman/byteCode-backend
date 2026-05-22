@@ -13,16 +13,18 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  username  String   @unique
-  password  String?
-  createdAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  supabaseId String?  @unique
+  email      String   @unique
+  username   String   @unique
+  password   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   profileImg String?
-  interests String?
-  bio String?
-  links String?
+  interests  String?
+  bio        String?
+  links      String?
   //string for now
-  status String?
+  status     String?
 }
