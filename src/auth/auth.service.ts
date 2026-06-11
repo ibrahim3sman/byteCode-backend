@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findOrCreateUser(supabasePayload: {
@@ -12,6 +14,7 @@ export class AuthService {
   }) {
     const { supabaseId, email, user_metadata } = supabasePayload;
 
+    // 1. Try by supabaseId first (fastest path)
     let user = await this.prisma.user.findUnique({
       where: { supabaseId },
     });
@@ -20,12 +23,12 @@ export class AuthService {
       return this.cleanUserData(user);
     }
 
+    // 2. Try linking an existing user by email
     user = await this.prisma.user.findUnique({
       where: { email },
     });
 
     if (user) {
-      // linking existing user to their supabase account
       user = await this.prisma.user.update({
         where: { email },
         data: { supabaseId },
@@ -33,21 +36,33 @@ export class AuthService {
       return this.cleanUserData(user);
     }
 
-    // creating a new user from Supabase data
-    const username = this.generateUsername(email, user_metadata);
+    // 3. Create a brand-new user
+    const baseUsername = this.generateUsername(email, user_metadata);
     const profileImg =
       user_metadata?.avatar_url || user_metadata?.picture || null;
 
-    user = await this.prisma.user.create({
-      data: {
-        supabaseId,
-        email,
-        username,
-        profileImg,
-      },
-    });
+    // Guarantee uniqueness: append random suffix on collision
+    let username = baseUsername;
+    let attempts = 0;
+    while (attempts < 5) {
+      try {
+        user = await this.prisma.user.create({
+          data: { supabaseId, email, username, profileImg },
+        });
+        return this.cleanUserData(user);
+      } catch (err: any) {
+        if (err?.code === 'P2002' && attempts < 4) {
+          // Unique constraint — try a different username
+          username = `${baseUsername}${Math.floor(Math.random() * 9000) + 1000}`;
+          attempts++;
+        } else {
+          this.logger.error(`Failed to create user: ${err}`);
+          throw err;
+        }
+      }
+    }
 
-    return this.cleanUserData(user);
+    throw new Error('Could not create user after multiple attempts');
   }
 
   async getProfile(supabaseId: string) {
@@ -56,6 +71,17 @@ export class AuthService {
     });
 
     if (!user) return null;
+    return this.cleanUserData(user);
+  }
+
+  async updateProfile(supabaseId: string, updateData: any) {
+    if (updateData.username) {
+      updateData.hasSetUsername = true;
+    }
+    const user = await this.prisma.user.update({
+      where: { supabaseId },
+      data: updateData,
+    });
     return this.cleanUserData(user);
   }
 
@@ -72,7 +98,8 @@ export class AuthService {
   }
 
   private cleanUserData(user: any) {
-    const { password, ...cleanUser } = user;
-    return cleanUser;
+    const { password, ...rest } = user;
+    return rest;
   }
 }
+
